@@ -1,0 +1,37 @@
+name: Check Vidhub access
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  check:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 5
+    steps:
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Compare request formats
+        shell: bash
+        run: |
+          python - <<'PY'
+          import subprocess, tempfile, pathlib, re, os
+          agents = {
+              'updater': 'VidhubLoonRuleUpdater/1.0',
+              'browser': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+          }
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as summary:
+              for label, agent in agents.items():
+                  with tempfile.TemporaryDirectory() as tmp:
+                      path = pathlib.Path(tmp)/'body'
+                      p = subprocess.run(['curl','-L','-sS','--compressed','--connect-timeout','5','--max-time','25','-A',agent,'-H','Accept: text/html,application/xhtml+xml','-o',str(path),'-w','%{http_code}','https://vidhub3.top/'],capture_output=True,text=True)
+                      body=path.read_text(errors='replace') if path.exists() else ''
+                      details=len(set(re.findall(r'/voddetail/\d+\.html',body)))
+                      row=f'{label}: HTTP {p.stdout}, detail links {details}, curl {p.returncode}'
+                      print(row)
+                      summary.write(row+'\n\n')
+          PY
