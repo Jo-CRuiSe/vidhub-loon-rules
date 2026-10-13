@@ -1,0 +1,8 @@
+[
+  {
+    "checked_date": "2026-10-13",
+    "source_page": "https://vidhub3.top/vodplay/306370-3-4.html",
+    "rule": "DOMAIN-SUFFIX,fengbao12.com",
+    "verification": "播放器配置、m3u8清单及全部分片引用确认；抽查分片HEAD为200且无跨域跳转。"
+  }
+]

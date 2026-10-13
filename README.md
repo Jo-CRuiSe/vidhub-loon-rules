@@ -10,6 +10,10 @@ GitHub Actions 每天北京时间 **10:23** 扫描 `vidhub3.top`，发现新域�
 
 若配置可访问站点的自托管运行器，添加标签 `vidhub`，并把仓库 Actions 变量 `VIDHUB_RUNNER` 设置为 `["self-hosted", "vidhub"]`。工作流已支持这一设置；需要运行器在线才能执行。删除该变量则恢复使用 GitHub 的 Ubuntu 托管运行器。
 
+## 单集补充记录
+
+2026-10-13：根据 [交锋第三条线路第4集](https://vidhub3.top/vodplay/306370-3-4.html) 的播放器配置和播放清单，补充 `DOMAIN-SUFFIX,fengbao12.com`。订阅目前累计 52 条规则。
+
 ## 建立仓库并启用
 
 1. 在 GitHub 创建一个空的 **公开仓库**，例如 `vidhub-loon-rules`，便于 Loon 通过 Raw 地址订阅。
