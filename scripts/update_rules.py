@@ -12,6 +12,8 @@ from pathlib import Path
 import re
 import subprocess
 import tempfile
+import threading
+import time
 from urllib.parse import unquote, urljoin, urlsplit
 from zoneinfo import ZoneInfo
 
@@ -132,12 +134,26 @@ class Scanner:
     def __init__(self, config, fetcher=None):
         self.config, self.fetcher = config, fetcher or fetch
         self.hosts, self.media, self.errors, self.counts = set(), {}, [], {}
+        self.limited = threading.Event()
+        self.request_lock = threading.Lock()
+        self.next_request = 0.0
 
     def read(self, url):
+        if self.limited.is_set():
+            return None
         try:
+            with self.request_lock:
+                if self.limited.is_set():
+                    return None
+                delay = self.next_request - time.monotonic()
+                if delay > 0:
+                    time.sleep(delay)
+                self.next_request = time.monotonic() + self.config.get('request_interval_seconds', 0)
             return self.fetcher(url)
         except (RuntimeError, subprocess.TimeoutExpired) as error:
             self.errors.append(str(error))
+            if 'HTTP 429' in str(error):
+                self.limited.set()
             return None
 
     def collect(self, page):
@@ -211,6 +227,8 @@ class Scanner:
                     found |= any(is_media(u) for u in player_configs(page))
                 parsed += int(found)
         self.counts['plays_parsed'] = parsed
+        if self.limited.is_set():
+            raise RuntimeError('站点返回 HTTP 429，停止请求并保留既有规则。')
         if parsed < min(3, len(plays)) or not plays or parsed / len(plays) < 0.5:
             raise RuntimeError('播放配置解析成功率不足，保留既有规则。')
         # Read one sample per CDN, follow bounded child playlists, never video segments.
@@ -234,6 +252,8 @@ class Scanner:
                     break
                 sample = child[0]
         self.hosts.discard(None)
+        if self.limited.is_set():
+            raise RuntimeError('站点返回 HTTP 429，停止请求并保留既有规则。')
         return self.hosts
 
 

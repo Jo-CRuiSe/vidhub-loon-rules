@@ -74,6 +74,17 @@ class ParsingTests(unittest.TestCase):
 
 
 class ScanTests(unittest.TestCase):
+    def test_rate_limit_stops_later_requests(self):
+        requests = []
+        def limited(url):
+            requests.append(url)
+            raise RuntimeError('site.example.org: HTTP 429, curl 0')
+        scan = app.Scanner(CONFIG, limited)
+        self.assertIsNone(scan.read(BASE))
+        self.assertIsNone(scan.read(BASE+'voddetail/1.html'))
+        self.assertEqual(requests, [BASE])
+        self.assertTrue(scan.limited.is_set())
+
     def test_complete_scan_follows_playlist_redirect_and_keys(self):
         scan = app.Scanner(CONFIG, fixture_fetch)
         hosts = scan.scan(date(2026,10,13))
