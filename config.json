@@ -1,0 +1,8 @@
+{
+  "base_url": "https://vidhub3.top",
+  "seed_movies": ["269371", "269846", "305139", "307712", "19780", "235339", "304582", "252860"],
+  "max_movies": 20,
+  "max_play_pages": 160,
+  "max_manifest_hosts": 60,
+  "workers": 2
+}

@@ -1,0 +1,52 @@
+name: Update Vidhub Loon rules
+
+on:
+  schedule:
+    # 02:23 UTC = 北京时间 10:23，避开整点。
+    - cron: '23 2 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: vidhub-rules
+  cancel-in-progress: false
+
+jobs:
+  update:
+    # 手动运行也更新默认分支，保证订阅地址稳定。
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Test parser and failure behavior
+        run: python -m unittest discover -s tests -v
+      - name: Discover domains and update rules
+        run: python scripts/update_rules.py
+      - name: Commit changed rules
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          git add data/domains.json rules/Vidhub.list rules/Vidhub-DIRECT.txt
+          if git diff --cached --quiet; then
+            echo "No rule changes."
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'Update Vidhub Loon DIRECT rules'
+          git push origin "HEAD:${DEFAULT_BRANCH}"
+      - name: Upload scan report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: vidhub-scan-report
+          path: reports/
+          if-no-files-found: ignore
+          retention-days: 14
