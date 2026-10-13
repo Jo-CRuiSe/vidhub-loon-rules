@@ -16,7 +16,8 @@ concurrency:
 jobs:
   update:
     # 手动运行也更新默认分支，保证订阅地址稳定。
-    runs-on: ubuntu-latest
+    # VIDHUB_RUNNER 可设为 ["self-hosted", "vidhub"]，使用能访问站点的自托管运行器。
+    runs-on: ${{ fromJSON(vars.VIDHUB_RUNNER || '["ubuntu-latest"]') }}
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v5

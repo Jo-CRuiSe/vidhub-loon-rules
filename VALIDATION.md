@@ -7,4 +7,6 @@
 - 先前抓取的 29 个真实嵌入播放器 HTML：JSON 配置中的视频地址均解析正确。
 - 小规模在线试跑：3 部影片详情、16 个播放页全部解析成功，发现 36 个域名；现有 51 条规则已覆盖，没有新增重复规则。仅检查前 3 个视频 CDN 的清单，未下载视频分片。
 - 工作流 YAML、每日 02:23 UTC 调度、写入权限及提交步骤的 Bash 语法已检查。
-- GitHub 托管运行器尚未实际执行；需要把项目上传到默认分支，再手动运行一次 Actions 验证远端网络与提交权限。
+- GitHub 云端首次执行：测试通过，首页请求 HTTP 403，扫描失败且旧规则保持不变。运行：https://github.com/Jo-CRuiSe/vidhub-loon-rules/actions/runs/38362717128
+- 独立诊断：Ubuntu、macOS 托管运行器均在普通请求和浏览器格式请求中收到首页 HTTP 403。运行：https://github.com/Jo-CRuiSe/vidhub-loon-rules/actions/runs/38362963851
+- 公开 Raw 订阅地址已实际读取，包含 51 条规则。自动更新仍需要可访问站点的运行环境。

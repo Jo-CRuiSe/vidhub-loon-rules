@@ -4,6 +4,12 @@ GitHub Actions 每天北京时间 **10:23** 扫描 `vidhub3.top`，发现新域�
 
 仓库：[Jo-CRuiSe/vidhub-loon-rules](https://github.com/Jo-CRuiSe/vidhub-loon-rules)。
 
+## 当前部署状态
+
+规则订阅已经公开，初始 51 条规则可访问。2026-10-13 的首次云端扫描访问首页时收到 HTTP 403；独立访问诊断中 Linux 和 macOS 托管运行器均返回 403，尚未实现成功的云端日更。失败时不会修改已有规则。
+
+若配置可访问站点的自托管运行器，添加标签 `vidhub`，并把仓库 Actions 变量 `VIDHUB_RUNNER` 设置为 `["self-hosted", "vidhub"]`。工作流已支持这一设置；需要运行器在线才能执行。删除该变量则恢复使用 GitHub 的 Ubuntu 托管运行器。
+
 ## 建立仓库并启用
 
 1. 在 GitHub 创建一个空的 **公开仓库**，例如 `vidhub-loon-rules`，便于 Loon 通过 Raw 地址订阅。
