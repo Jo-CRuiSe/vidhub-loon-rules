@@ -11,19 +11,39 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: '3.12'
-      - name: Install browser-compatible HTTP client
-        run: python -m pip install curl_cffi==0.16.3
+      - name: Install real browser
+        run: |
+          python -m pip install playwright==1.64.0
+          python -m playwright install --with-deps --no-shell chromium
       - name: Verify actual homepage content
         run: |
-          python - <<'PY'
-          from curl_cffi import requests
-          import re, os
-          r = requests.get('https://vidhub3.top/', impersonate='chrome', timeout=25)
-          links = set(re.findall(r'/voddetail/\d+\.html', r.text))
-          title = re.search(r'<title>(.*?)</title>', r.text, re.S)
-          result = f'HTTP {r.status_code}; detail links {len(links)}; server {r.headers.get("server")}; cf-mitigated {r.headers.get("cf-mitigated")}; title {title.group(1)[:80] if title else "none"}'
-          print(result)
-          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as f:
-              f.write(result+'\n')
-          assert r.status_code == 200 and len(links) >= 3, 'Homepage access is still blocked'
+          xvfb-run -a python - <<'PY'
+          from playwright.sync_api import sync_playwright, TimeoutError
+          import re, os, pathlib
+          pathlib.Path('reports').mkdir(exist_ok=True)
+          with sync_playwright() as p:
+              browser = p.chromium.launch(headless=False)
+              page = browser.new_page()
+              response = page.goto('https://vidhub3.top/', wait_until='domcontentloaded', timeout=45000)
+              try:
+                  page.wait_for_selector('a[href*="/voddetail/"]', timeout=30000)
+              except TimeoutError:
+                  pass
+              links = set(re.findall(r'/voddetail/\d+\.html', page.content()))
+              result = f'Initial HTTP {response.status if response else None}; detail links {len(links)}; title {page.title()}'
+              print(result)
+              page.screenshot(path='reports/browser-access.png')
+              pathlib.Path('reports/access.txt').write_text(result)
+              with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as f:
+                  f.write(result+'\n')
+              browser.close()
+              assert len(links) >= 3, 'Real browser cannot access homepage'
           PY
+      - name: Upload access evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: vidhub-browser-access
+          path: reports/
+          if-no-files-found: ignore
+          retention-days: 7
