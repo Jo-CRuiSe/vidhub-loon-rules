@@ -74,6 +74,73 @@ class ParsingTests(unittest.TestCase):
 
 
 class ScanTests(unittest.TestCase):
+    def test_official_alternate_is_used_when_main_is_blocked(self):
+        def alternate(url):
+            if app.hostname(url) == 'vidhub3.top':
+                raise RuntimeError('HTTP 403')
+            return fixture_fetch(url)
+        config = dict(CONFIG, fallback_base_urls=['https://mirror.example.org'])
+        scan = app.Scanner(config, alternate)
+        self.assertIn('segment.example.net', scan.scan(date(2026,10,14)))
+        self.assertEqual(scan.mode, 'full')
+        self.assertEqual(scan.active_base, 'https://mirror.example.org/')
+
+    def test_blocked_website_can_check_confirmed_cdn_playlists(self):
+        def only_cdn(url):
+            if app.hostname(url) == 'vidhub3.top':
+                raise RuntimeError('HTTP 403')
+            return fixture_fetch(url)
+        config = dict(CONFIG, cdn_samples=[{'playlist_url':'https://video.example.org/master.m3u8'}], cdn_sample_min_success=1)
+        scan = app.Scanner(config, only_cdn)
+        self.assertTrue({'redirect.example.org','key.example.net','segment.example.net'} <= scan.scan(date(2026,10,14)))
+        self.assertEqual(scan.mode, 'cdn_only')
+        self.assertEqual(scan.counts['manifests_succeeded'], 1)
+        self.assertNotIn('plays_parsed', scan.counts)
+
+    def test_html_error_page_cannot_pass_cdn_fallback(self):
+        def html(url):
+            if app.hostname(url) == 'vidhub3.top':
+                raise RuntimeError('HTTP 403')
+            return '<html>https://trap.example.net/fake.ts</html>',url
+        config = dict(CONFIG, cdn_samples=[{'playlist_url':'https://video.example.org/master.m3u8'}], cdn_sample_min_success=1)
+        scan = app.Scanner(config, html)
+        with self.assertRaisesRegex(RuntimeError,'检查门槛'):
+            scan.scan(date(2026,10,14))
+        self.assertEqual(scan.hosts, set())
+
+    def test_cdn_partial_success_is_reported_without_losing_old_rules(self):
+        def only_cdn(url):
+            if app.hostname(url) == 'vidhub3.top':
+                raise RuntimeError('HTTP 403')
+            return fixture_fetch(url)
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder)
+            (root/'data').mkdir()
+            (root/'data/domains.json').write_text(json.dumps({'rules':['DOMAIN,old.example.org']}))
+            (root/'data/cdn-samples.json').write_text(json.dumps([{'playlist_url':'https://video.example.org/master.m3u8'}]))
+            (root/'config.json').write_text(json.dumps(dict(CONFIG,cdn_sample_min_success=1)))
+            with patch.object(sys,'argv',['update_rules','--root',folder]),patch.object(app,'fetch',side_effect=only_cdn):
+                app.main()
+            self.assertIn('局部检查成功',(root/'reports/summary.md').read_text())
+            self.assertIn('未扫描新影片线路',(root/'reports/summary.md').read_text())
+            self.assertIn('DOMAIN,old.example.org',(root/'rules/Vidhub.list').read_text())
+            self.assertIn('DOMAIN,segment.example.net',(root/'rules/Vidhub.list').read_text())
+
+    def test_all_cdn_sources_blocked_preserves_subscription(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder)
+            (root/'data').mkdir()
+            state=root/'data/domains.json'
+            state.write_text(json.dumps({'rules':['DOMAIN,old.example.org']}))
+            (root/'data/cdn-samples.json').write_text(json.dumps([{'playlist_url':'https://video.example.org/master.m3u8'}]))
+            (root/'config.json').write_text(json.dumps(dict(CONFIG,cdn_sample_min_success=1)))
+            app.save_rules(['DOMAIN,old.example.org'],root/'rules')
+            before=state.read_bytes(),(root/'rules/Vidhub.list').read_bytes()
+            with patch.object(sys,'argv',['update_rules','--root',folder]),patch.object(app,'fetch',side_effect=RuntimeError('HTTP 403')):
+                with self.assertRaises(SystemExit):
+                    app.main()
+            self.assertEqual(before,(state.read_bytes(),(root/'rules/Vidhub.list').read_bytes()))
+
     def test_rate_limit_stops_later_requests(self):
         requests = []
         def limited(url):

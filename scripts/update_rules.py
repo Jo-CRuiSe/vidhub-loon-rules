@@ -115,7 +115,7 @@ def fetch(url):
         response = subprocess.run([
             'curl', '--silent', '--show-error', '--location', '--max-redirs', '5',
             '--proto', '=http,https', '--proto-redir', '=http,https',
-            '--connect-timeout', '5', '--max-time', '18', '--retry', '1', '--retry-delay', '1',
+            '--connect-timeout', '5', '--max-time', '18', '--retry', '0',
             '--max-filesize', '2097152', '--user-agent', 'VidhubLoonRuleUpdater/1.0',
             '--output', str(body), '--write-out', '%{http_code}\n%{url_effective}', url,
         ], capture_output=True, text=True, timeout=45)
@@ -134,6 +134,8 @@ class Scanner:
     def __init__(self, config, fetcher=None):
         self.config, self.fetcher = config, fetcher or fetch
         self.hosts, self.media, self.errors, self.counts = set(), {}, [], {}
+        self.mode = 'full'
+        self.active_base = None
         self.limited = threading.Event()
         self.request_lock = threading.Lock()
         self.next_request = 0.0
@@ -165,16 +167,69 @@ class Scanner:
                 if is_media(url):
                     self.media.setdefault(host, url)
 
+    def probe_manifests(self, samples):
+        attempted, succeeded = 0, 0
+        for sample in samples[:self.config['max_manifest_hosts']]:
+            if self.limited.is_set():
+                break
+            if not hostname(sample) or not urlsplit(sample).path.lower().endswith('.m3u8'):
+                continue
+            attempted += 1
+            visited, valid = set(), False
+            for _ in range(3):
+                if sample in visited:
+                    break
+                visited.add(sample)
+                result = self.read(sample)
+                if not result:
+                    break
+                refs = playlist_refs(*result)
+                if not refs:
+                    self.errors.append(f'{hostname(sample)}: 未返回可用 HLS 清单')
+                    break
+                valid = True
+                self.hosts.add(hostname(sample))
+                self.hosts.add(hostname(result[1]))
+                self.hosts.update(filter(None, map(hostname, refs)))
+                child = [u for u in refs if urlsplit(u).path.lower().endswith('.m3u8')]
+                if not child:
+                    break
+                sample = child[0]
+            succeeded += int(valid)
+        self.counts.update(manifests_attempted=attempted, manifests_succeeded=succeeded)
+        self.hosts.discard(None)
+        return succeeded
+
     def scan(self, day):
-        base = self.config['base_url'].rstrip('/') + '/'
-        home = self.read(base)
+        home, homepage, links = None, None, []
+        addresses = [self.config['base_url']] + self.config.get('fallback_base_urls', [])
+        for address in dict.fromkeys(addresses):
+            if not hostname(address):
+                raise ValueError('Invalid website address in config')
+            candidate = self.read(address.rstrip('/') + '/')
+            if not candidate:
+                continue
+            page = Page(*candidate)
+            candidates = sorted({u for u in page.links if urlsplit(u).netloc == urlsplit(candidate[1]).netloc
+                                 and re.fullmatch(r'/voddetail/\d+\.html', urlsplit(u).path)})
+            if len(candidates) < 3:
+                self.errors.append(f'{hostname(address)}: 首页不是可用的影片列表')
+                continue
+            home, homepage, links = candidate, page, candidates
+            self.active_base = candidate[1]
+            break
         if not home:
-            raise RuntimeError('首页访问失败，保留既有规则。')
-        homepage = Page(*home)
-        links = sorted({u for u in homepage.links if urlsplit(u).netloc == urlsplit(home[1]).netloc
-                        and re.fullmatch(r'/voddetail/\d+\.html', urlsplit(u).path)})
-        if len(links) < 3:
-            raise RuntimeError('首页未找到足够的影片链接，可能被验证页拦截，保留既有规则。')
+            samples = self.config.get('cdn_samples', [])
+            if not samples or self.limited.is_set():
+                raise RuntimeError('首页访问失败或被验证页拦截，保留既有规则。')
+            self.mode = 'cdn_only'
+            # Discard failed page observations; only fresh, usable HLS can add domains.
+            self.hosts.clear()
+            succeeded = self.probe_manifests([sample['playlist_url'] for sample in samples])
+            minimum = self.config.get('cdn_sample_min_success', 3)
+            if self.limited.is_set() or succeeded < minimum:
+                raise RuntimeError(f'主站不可访问，CDN 清单也未达到检查门槛（{succeeded}/{minimum}），保留既有规则。')
+            return self.hosts
         self.collect(homepage)
         self.hosts.add(hostname(home[1]))
         limit = self.config['max_movies']
@@ -232,26 +287,7 @@ class Scanner:
         if parsed < min(3, len(plays)) or not plays or parsed / len(plays) < 0.5:
             raise RuntimeError('播放配置解析成功率不足，保留既有规则。')
         # Read one sample per CDN, follow bounded child playlists, never video segments.
-        for host, sample in sorted(self.media.items())[:self.config['max_manifest_hosts']]:
-            if not urlsplit(sample).path.lower().endswith('.m3u8'):
-                continue
-            visited = set()
-            for _ in range(3):
-                if sample in visited:
-                    break
-                visited.add(sample)
-                result = self.read(sample)
-                if not result:
-                    break
-                refs = playlist_refs(*result)
-                if hostname(result[1]):
-                    self.hosts.add(hostname(result[1]))
-                self.hosts.update(filter(None, map(hostname, refs)))
-                child = [u for u in refs if urlsplit(u).path.lower().endswith('.m3u8')]
-                if not child:
-                    break
-                sample = child[0]
-        self.hosts.discard(None)
+        self.probe_manifests([sample for host, sample in sorted(self.media.items())])
         if self.limited.is_set():
             raise RuntimeError('站点返回 HTTP 429，停止请求并保留既有规则。')
         return self.hosts
@@ -294,6 +330,9 @@ def main():
         save_rules(merge_rules(existing, []), root/'rules')
         return
     config = json.loads((root/'config.json').read_text())
+    sample_file = root/'data/cdn-samples.json'
+    if sample_file.exists():
+        config['cdn_samples'] = json.loads(sample_file.read_text())
     scan = Scanner(config)
     now = datetime.now(ZoneInfo('Asia/Shanghai'))
     reports = root/'reports'
@@ -309,10 +348,14 @@ def main():
         temp.write_text(json.dumps({'rules': rules}, indent=2)+'\n')
         temp.replace(state)
         ok = True
-        message = f'发现 {len(observed)} 个域名，新增 {len(additions)} 条规则，累计 {len(rules)} 条。'
+        coverage = '局部检查：主站不可访问，仅检查已确认的 CDN 清单；未扫描新影片线路。' if scan.mode == 'cdn_only' else '完整页面扫描。'
+        message = f'{coverage} 发现 {len(observed)} 个域名，新增 {len(additions)} 条规则，累计 {len(rules)} 条。'
     except (RuntimeError, ValueError) as error:
         message = str(error)
-    report = f'# Vidhub 检查结果\n\n时间：{now.isoformat()}\n\n状态：{"成功" if ok else "失败"}\n\n{message}\n\n'
+    status = ('局部检查成功' if scan.mode == 'cdn_only' else '完整扫描成功') if ok else '失败'
+    report = f'# Vidhub 检查结果\n\n时间：{now.isoformat()}\n\n状态：{status}\n\n{message}\n\n'
+    if scan.active_base:
+        report += f'实际扫描入口：{scan.active_base}\n\n'
     report += '\n'.join(f'- {key}: {value}' for key, value in scan.counts.items())
     report += '\n\n新增规则：\n\n' + ('\n'.join('- `'+r+'`' for r in additions) or '无')
     report += '\n\n请求/解析问题（包括 CDN 403；域名仍可由播放器配置确认）：\n\n'
@@ -323,6 +366,8 @@ def main():
         with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as f:
             f.write(report+'\n')
     print(message)
+    if ok and scan.mode == 'cdn_only' and os.environ.get('GITHUB_ACTIONS'):
+        print('::warning::主站仍受访问限制，本次只检查 CDN 样本，不代表全站线路已更新。')
     if not ok:
         raise SystemExit(1)
 

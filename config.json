@@ -1,9 +1,11 @@
 {
   "base_url": "https://vidhub3.top",
+  "fallback_base_urls": ["https://vidhub1.cc", "https://vidhub2.top", "https://vidhub.cc", "https://vidhub.tv"],
   "seed_movies": ["269371", "19780", "235339"],
   "max_movies": 6,
   "max_play_pages": 48,
   "max_manifest_hosts": 24,
+  "cdn_sample_min_success": 3,
   "workers": 1,
   "request_interval_seconds": 1.5
 }
