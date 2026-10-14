@@ -6,6 +6,8 @@ import sys
 import tempfile
 import unittest
 from unittest.mock import patch
+from types import SimpleNamespace
+import os
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]/'scripts'))
 import update_rules as app
@@ -36,6 +38,26 @@ def fixture_fetch(url):
 
 
 class ParsingTests(unittest.TestCase):
+    def test_proxy_is_only_passed_to_curl_environment(self):
+        proxy = 'http://user:password@proxy.example.org:8080'
+        captured = {}
+        def fake_run(command, **kwargs):
+            captured.update(command=command, env=kwargs['env'])
+            Path(command[command.index('--output')+1]).write_text('#EXTM3U\na.ts\n')
+            return SimpleNamespace(stdout='200\nhttps://video.example.org/index.m3u8',returncode=0)
+        with patch.dict(os.environ, {'VIDHUB_PROXY':proxy}, clear=True),patch.object(app.subprocess,'run',side_effect=fake_run):
+            content, _ = app.fetch('https://video.example.org/index.m3u8')
+            self.assertNotIn('https_proxy',os.environ)
+        self.assertTrue(content.startswith('#EXTM3U'))
+        self.assertEqual(captured['env']['https_proxy'],proxy)
+        self.assertFalse(any(proxy in value for value in captured['command']))
+
+    def test_invalid_proxy_does_not_leak_credentials(self):
+        with patch.dict(os.environ,{'VIDHUB_PROXY':'file://user:password@localhost/private'},clear=True):
+            with self.assertRaises(RuntimeError) as result:
+                app.fetch('https://video.example.org/index.m3u8')
+        self.assertNotIn('password',str(result.exception))
+
     def test_external_iframe_host_is_retained(self):
         scan = app.Scanner(CONFIG)
         scan.collect(app.Page('<iframe src="https://player.example.net/embed"></iframe>', BASE))

@@ -110,6 +110,21 @@ def playlist_refs(body, base):
 
 
 def fetch(url):
+    fetch_env = None
+    proxy = os.environ.get('VIDHUB_PROXY', '').strip()
+    if proxy:
+        try:
+            parsed_proxy = urlsplit(proxy)
+            if parsed_proxy.scheme not in ('http', 'https', 'socks5', 'socks5h') or not parsed_proxy.hostname:
+                raise ValueError
+            parsed_proxy.port
+        except ValueError:
+            raise RuntimeError('VIDHUB_PROXY 格式无效，请使用 HTTP/HTTPS/SOCKS5 代理 URL。') from None
+        # Keep credentials out of argv, logs, and global environment; proxy only website reads.
+        fetch_env = os.environ.copy()
+        fetch_env.update(http_proxy=proxy, https_proxy=proxy, all_proxy=proxy)
+        fetch_env.pop('no_proxy', None)
+        fetch_env.pop('NO_PROXY', None)
     with tempfile.TemporaryDirectory() as temp:
         body = Path(temp) / 'body'
         response = subprocess.run([
@@ -118,7 +133,7 @@ def fetch(url):
             '--connect-timeout', '5', '--max-time', '18', '--retry', '0',
             '--max-filesize', '2097152', '--user-agent', 'VidhubLoonRuleUpdater/1.0',
             '--output', str(body), '--write-out', '%{http_code}\n%{url_effective}', url,
-        ], capture_output=True, text=True, timeout=45)
+        ], capture_output=True, text=True, timeout=45, env=fetch_env)
         parts = response.stdout.splitlines()
         code = int(parts[0]) if parts and parts[0].isdigit() else 0
         effective = parts[1] if len(parts) > 1 else url

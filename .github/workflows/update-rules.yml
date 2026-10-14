@@ -29,6 +29,8 @@ jobs:
       - name: Test parser and failure behavior
         run: python -m unittest discover -s tests -v
       - name: Discover domains and update rules
+        env:
+          VIDHUB_PROXY: ${{ secrets.VIDHUB_PROXY }}
         run: python scripts/update_rules.py
       - name: Commit changed rules
         env:
