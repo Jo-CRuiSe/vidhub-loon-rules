@@ -8,28 +8,33 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
+      - uses: actions/checkout@v5
       - uses: actions/setup-python@v6
         with:
           python-version: '3.12'
-      - name: Verify official alternate addresses
+      - name: Install browser-compatible CDN client
+        run: python -m pip install curl_cffi==0.16.3
+      - name: Verify actual CDN playlists
         run: |
           python - <<'CHECK'
-          import subprocess, tempfile, pathlib, re, os
-          # Addresses read from https://vidhub.link/ on 2026-10-14.
-          addresses = ['https://vidhub1.cc/', 'https://vidhub2.top/', 'https://vidhub.cc/', 'https://vidhub.tv/']
-          successes = []
-          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as summary:
-              for url in addresses:
-                  with tempfile.TemporaryDirectory() as tmp:
-                      body = pathlib.Path(tmp)/'body'
-                      r = subprocess.run(['curl','-L','-sS','--connect-timeout','5','--max-time','20','--max-filesize','2097152','--max-redirs','4','-o',str(body),'-w','%{http_code} %{url_effective}',url],capture_output=True,text=True)
-                      content = body.read_text(errors='replace') if body.exists() else ''
-                      links = set(re.findall(r'/voddetail/\d+\.html',content))
-                      title = re.search(r'<title>(.*?)</title>',content,re.S)
-                      message = f'{url}: {r.stdout}; detail links {len(links)}; title {title.group(1)[:60] if title else "none"}'
-                      print(message, flush=True)
-                      summary.write(message+'\n\n')
-                      if r.returncode == 0 and r.stdout.startswith('200 ') and len(links)>=3:
-                          successes.append(url)
-          assert successes, 'No accessible official alternate address'
+          from curl_cffi import requests
+          import json, time, os
+          from urllib.parse import urlsplit
+          sources=json.load(open('data/cdn-samples.json'))
+          successes=0
+          with requests.Session(impersonate='chrome') as session, open(os.environ['GITHUB_STEP_SUMMARY'],'a') as summary:
+              for source in sources:
+                  url=source['playlist_url']
+                  try:
+                      r=session.get(url,timeout=15)
+                      valid=r.status_code==200 and r.text.lstrip().startswith('#EXTM3U')
+                      successes+=int(valid)
+                      line=f'{urlsplit(url).hostname}: HTTP {r.status_code}; HLS {valid}'
+                  except Exception as error:
+                      line=f'{urlsplit(url).hostname}: {type(error).__name__}'
+                  print(line,flush=True)
+                  summary.write(line+'\n\n')
+                  time.sleep(1.5)
+          print('Usable samples:',successes)
+          assert successes>=3,'Insufficient usable CDN samples'
           CHECK
